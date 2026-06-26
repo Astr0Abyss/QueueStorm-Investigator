@@ -17,6 +17,7 @@ type LlmTextPatch = {
 };
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_TIMEOUT_MS = 2500;
 const MAX_TIMEOUT_MS = 5000;
 
@@ -65,12 +66,16 @@ function readLlmConfig():
       timeoutMs: number;
     }
   | undefined {
-  const apiKey = process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
-  const model = process.env.AI_MODEL || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
-  const baseUrl = (process.env.AI_BASE_URL || process.env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL).replace(
-    /\/$/,
-    ""
-  );
+  const nvidiaKey = process.env.NVIDIA_API_KEY;
+  const apiKey = nvidiaKey || process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
+  const model = nvidiaKey
+    ? process.env.NVIDIA_REPAIR_MODEL || process.env.NVIDIA_PLAN_MODEL || "deepseek-ai/deepseek-v4-pro"
+    : process.env.AI_MODEL || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
+  const baseUrl = (
+    nvidiaKey
+      ? process.env.NVIDIA_BASE_URL || DEFAULT_NVIDIA_BASE_URL
+      : process.env.AI_BASE_URL || process.env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL
+  ).replace(/\/$/, "");
   const timeoutMs = Math.min(Number(process.env.LLM_TIMEOUT_MS || DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS);
 
   if (!apiKey) {
@@ -139,12 +144,17 @@ async function requestTextPatch(
     });
 
     if (!response.ok) {
+      console.warn(`LLM text enrichment skipped: provider returned HTTP ${response.status}`);
       return undefined;
     }
 
     const data = (await response.json()) as ChatCompletionResponse;
     const content = data.choices?.[0]?.message?.content;
     return content ? parseJsonPatch(content) : undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.name : "unknown_error";
+    console.warn(`LLM text enrichment skipped: ${message}`);
+    return undefined;
   } finally {
     clearTimeout(timeout);
   }
