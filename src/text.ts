@@ -81,7 +81,11 @@ export function extractClues(ticket: AnalyzeTicketRequest): ExtractedClues {
   const keywordHits = [
     "wrong",
     "failed",
+    "fail",
+    "fail hoise",
     "deducted",
+    "kete",
+    "kete geche",
     "refund",
     "duplicate",
     "twice",

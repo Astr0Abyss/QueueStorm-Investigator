@@ -59,9 +59,12 @@ const WRONG_TRANSFER = [
 const PAYMENT_FAILED = [
   "payment failed",
   "transaction failed",
+  "fail",
+  "fail hoise",
   "failed",
   "balance deducted",
   "deducted",
+  "taka kete",
   "money cut",
   "recharge failed",
   "ফেইল",
@@ -85,6 +88,20 @@ const CASH_IN = [
   "এজেন্ট"
 ];
 
+const SUSPICIOUS_REFERENCE = [
+  "token",
+  "reference",
+  "claim money",
+  "claim reward",
+  "not from my account",
+  "another account",
+  "other account",
+  "unknown reference",
+  "unknown transaction",
+  "verify ownership",
+  "ownership"
+];
+
 export function analyzeTicket(ticket: AnalyzeTicketRequest): AnalyzeTicketResponse {
   const safeTicket: AnalyzeTicketRequest = {
     ...ticket,
@@ -96,13 +113,24 @@ export function analyzeTicket(ticket: AnalyzeTicketRequest): AnalyzeTicketRespon
   const history = safeTicket.transaction_history ?? [];
   const match = matchTransaction(history, caseType, clues);
   const relevant = match.transaction;
-  const evidence = decideEvidence(caseType, clues, history, relevant, match.ambiguous);
-  const department = decideDepartment(caseType, safeTicket);
-  const severity = decideSeverity(caseType, evidence, relevant, match.ambiguous);
-  const humanReviewRequired = decideHumanReview(caseType, evidence, severity, relevant, match.ambiguous);
-  const reasonCodes = buildReasonCodes(caseType, evidence, match.reason, relevant, clues, match.ambiguous);
+  const suspiciousReference = isSuspiciousReferenceCase(clues, relevant);
+  const evidence = decideEvidence(caseType, clues, history, relevant, match.ambiguous, suspiciousReference);
+  const department = decideDepartment(caseType, safeTicket, suspiciousReference);
+  const severity = decideSeverity(caseType, evidence, relevant, match.ambiguous, suspiciousReference);
+  const humanReviewRequired = decideHumanReview(caseType, evidence, severity, relevant, match.ambiguous, suspiciousReference);
+  const reasonCodes = buildReasonCodes(caseType, evidence, match.reason, relevant, clues, match.ambiguous, suspiciousReference);
   const confidence = decideConfidence(evidence, caseType, relevant, match.ambiguous, clues);
-  const texts = buildTexts(safeTicket, clues, caseType, evidence, department, severity, relevant, match.ambiguous);
+  const texts = buildTexts(
+    safeTicket,
+    clues,
+    caseType,
+    evidence,
+    department,
+    severity,
+    relevant,
+    match.ambiguous,
+    suspiciousReference
+  );
 
   return {
     ticket_id: safeTicket.ticket_id,
@@ -142,9 +170,30 @@ function detectCaseType(ticket: AnalyzeTicketRequest, clues: ExtractedClues): Ca
   if (containsAny(text, PAYMENT_FAILED)) return "payment_failed";
   if (containsAny(text, WRONG_TRANSFER)) return "wrong_transfer";
   if (containsAny(text, REFUND)) return "refund_request";
+  if (
+    containsAny(text, SUSPICIOUS_REFERENCE) &&
+    containsAny(text, ["not from my account", "another account", "other account", "unknown", "safe", "claim money"])
+  ) {
+    return "other";
+  }
   if (clues.amounts.length > 0 && history.some((tx) => tx.type === "transfer")) return "wrong_transfer";
 
   return "other";
+}
+
+function isSuspiciousReferenceCase(clues: ExtractedClues, relevant: TransactionHistoryEntry | null): boolean {
+  if (relevant) return false;
+  const mentionsReference = clues.mentionedTransactionIds.length > 0 || containsAny(clues.normalized, SUSPICIOUS_REFERENCE);
+  const ownershipConcern = containsAny(clues.normalized, [
+    "not from my account",
+    "another account",
+    "other account",
+    "unknown",
+    "safe",
+    "claim money",
+    "claim reward"
+  ]);
+  return mentionsReference && ownershipConcern;
 }
 
 function decideEvidence(
@@ -152,9 +201,11 @@ function decideEvidence(
   clues: ExtractedClues,
   history: TransactionHistoryEntry[],
   relevant: TransactionHistoryEntry | null,
-  ambiguous: boolean
+  ambiguous: boolean,
+  suspiciousReference: boolean
 ): EvidenceVerdict {
   if (caseType === "phishing_or_social_engineering") return "insufficient_data";
+  if (suspiciousReference) return "inconsistent";
   if (caseType === "other" || ambiguous || !clues.hasSpecificClue) return "insufficient_data";
   if (!relevant) return "insufficient_data";
   if (caseType === "wrong_transfer" && hasEstablishedRecipientPattern(history, relevant)) return "inconsistent";
@@ -167,7 +218,9 @@ function decideEvidence(
   return "consistent";
 }
 
-function decideDepartment(caseType: CaseType, ticket: AnalyzeTicketRequest): Department {
+function decideDepartment(caseType: CaseType, ticket: AnalyzeTicketRequest, suspiciousReference: boolean): Department {
+  if (suspiciousReference) return "fraud_risk";
+
   switch (caseType) {
     case "wrong_transfer":
       return "dispute_resolution";
@@ -191,8 +244,10 @@ function decideSeverity(
   caseType: CaseType,
   evidence: EvidenceVerdict,
   relevant: TransactionHistoryEntry | null,
-  ambiguous: boolean
+  ambiguous: boolean,
+  suspiciousReference: boolean
 ): Severity {
+  if (suspiciousReference) return "medium";
   if (caseType === "phishing_or_social_engineering") return "critical";
   if (caseType === "other") return "low";
   if (caseType === "refund_request") return evidence === "insufficient_data" ? "medium" : "low";
@@ -216,8 +271,10 @@ function decideHumanReview(
   evidence: EvidenceVerdict,
   severity: Severity,
   relevant: TransactionHistoryEntry | null,
-  ambiguous: boolean
+  ambiguous: boolean,
+  suspiciousReference: boolean
 ): boolean {
+  if (suspiciousReference) return true;
   if (caseType === "phishing_or_social_engineering") return true;
   if (caseType === "wrong_transfer") return evidence !== "insufficient_data";
   if (caseType === "duplicate_payment") return true;
@@ -245,7 +302,8 @@ function buildReasonCodes(
   matchReason: string,
   relevant: TransactionHistoryEntry | null,
   clues: ExtractedClues,
-  ambiguous: boolean
+  ambiguous: boolean,
+  suspiciousReference: boolean
 ): string[] {
   const codes = new Set<string>([caseType]);
   if (evidence === "consistent") codes.add("evidence_consistent");
@@ -254,6 +312,7 @@ function buildReasonCodes(
   if (relevant) codes.add("transaction_match");
   if (ambiguous) codes.add("ambiguous_match");
   if (matchReason === "duplicate_pattern") codes.add("duplicate_pattern");
+  if (suspiciousReference) codes.add("ownership_reference_mismatch");
   if (clues.language === "bn" || clues.language === "mixed") codes.add("local_language_detected");
   if (caseType === "phishing_or_social_engineering") codes.add("credential_protection");
   return Array.from(codes).slice(0, 6);
@@ -282,7 +341,8 @@ function buildTexts(
   department: Department,
   severity: Severity,
   relevant: TransactionHistoryEntry | null,
-  ambiguous: boolean
+  ambiguous: boolean,
+  suspiciousReference: boolean
 ): Pick<AnalyzeTicketResponse, "agent_summary" | "recommended_next_action" | "customer_reply"> {
   const amount = relevant ? `${relevant.amount} BDT` : clues.amounts[0] ? `${clues.amounts[0]} BDT` : "the reported amount";
   const tx = relevant ? `transaction ${relevant.transaction_id}` : "the reported issue";
@@ -300,6 +360,17 @@ function buildTexts(
         : mixed
           ? "Information share korar age contact korar jonno dhonnobad. Amra kokhono PIN, OTP, password chai na. Official bole claim korleo egulo share korben na. Fraud team issue ta review korbe."
           : "Thank you for reaching out before sharing any information. We never ask for your PIN, OTP, or password. Please do not share these with anyone, even if they claim to be from official support. Our fraud team will review this incident."
+    };
+  }
+
+  if (suspiciousReference) {
+    return {
+      agent_summary:
+        "Customer reports a token or transaction reference that cannot be verified against the supplied account history. Treat as a suspicious ownership/reference mismatch.",
+      recommended_next_action:
+        "Verify ownership of the token or transaction reference before taking any action. Escalate for human review if the reference belongs to another account.",
+      customer_reply:
+        "We could not verify this reference against your account from the provided information. Please contact support from the registered account or share only official transaction details such as transaction ID, amount, and time. Do not share your PIN, OTP, password, or card details."
     };
   }
 

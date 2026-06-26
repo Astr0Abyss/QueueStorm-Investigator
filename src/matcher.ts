@@ -9,6 +9,7 @@ function expectedTypes(caseType: CaseType): string[] {
     case "wrong_transfer":
       return ["transfer"];
     case "payment_failed":
+      return ["payment", "cash_out"];
     case "duplicate_payment":
     case "refund_request":
       return ["payment"];

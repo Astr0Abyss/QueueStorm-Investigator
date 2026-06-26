@@ -65,17 +65,17 @@ The matcher uses a minimum transaction score of `45`, ambiguity margin of `25`, 
 
 ## MODELS
 
-Default submission mode uses no external ML model, no database, and no model server. The evidence reasoning engine is deterministic TypeScript rules. This is a deliberate reliability and latency choice for the 30-second enforced judge timeout and the 60-second health-readiness requirement.
+Default scoring decisions use no database and no model server. The evidence reasoning engine is deterministic TypeScript rules, which is a deliberate reliability and latency choice for the 30-second enforced judge timeout and the 60-second health-readiness requirement.
 
 Optional fallback:
 
-- Model provider: OpenAI-compatible chat completion endpoint, for example OpenRouter
-- Suggested model: `google/gemini-2.5-flash`
+- Model providers: direct Gemini API, NVIDIA/OpenAI-compatible chat completion endpoint, or OpenRouter/OpenAI-compatible endpoint
+- Suggested fast model: `gemini-2.5-flash`
 - Runtime location: external API, only if `ENABLE_LLM_FALLBACK=true`
 - Purpose: text enrichment for low-confidence `other` / `insufficient_data` cases only
 - Guardrails: cannot change schema, enum values, transaction selection, evidence verdict, department, severity, human-review decisions, or safety policy
 
-Recommended deployment setting for judging: keep `ENABLE_LLM_FALLBACK=false` unless you intentionally want the optional text-enrichment path.
+Recommended deployment posture for judging: keep deterministic reasoning as the source of truth. If `ENABLE_LLM_FALLBACK=true`, the API still falls back safely to deterministic text whenever a provider is slow, unavailable, or rejects the request.
 
 ## Local Development
 
@@ -165,9 +165,14 @@ Example variable names only:
 
 ```text
 ENABLE_LLM_FALLBACK=true
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 AI_API_KEY=
 AI_MODEL=google/gemini-2.5-flash
 AI_BASE_URL=https://openrouter.ai/api/v1
+NVIDIA_API_KEY=
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_REPAIR_MODEL=mistralai/mistral-nemotron
 LLM_TIMEOUT_MS=2500
 ```
 
@@ -180,12 +185,3 @@ Neon/Postgres is not required for this challenge. The API is stateless by design
 The analyzer never asks customers to share PIN, OTP, password, card number, CVV, or other sensitive credentials. It also does not promise refunds, reversals, recovery, or account unblocks.
 
 Safety checks must distinguish actual credential requests from warning language. Text like "Please do not share your PIN or OTP" is safe and should not be rewritten.
-
-## Final Submission Checklist
-
-- GitHub repository is public or organizer handle `bipulhf` has read access.
-- One team member owns the submission form during the final 15 minutes.
-- Submitted live base URL exposes `/health` and `/analyze-ticket` without login.
-- README includes this MODELS section and current limitations.
-- `sample-output.json` is regenerated from the deployed endpoint before final submission.
-- `.env.example` contains variable names only, no real secrets.

@@ -125,3 +125,53 @@ test("multiple same amount transfers remain ambiguous", () => {
   assert.equal(result.relevant_transaction_id, null);
   assert.equal(result.evidence_verdict, "insufficient_data");
 });
+
+test("failed cash out with deducted balance matches the cash_out transaction", () => {
+  const result = analyze({
+    ticket_id: "EDGE-007",
+    complaint: "cash out fail hoise kintu amar balance theke taka kete geche",
+    language: "mixed",
+    transaction_history: [
+      {
+        transaction_id: "TXN-E7",
+        timestamp: "2026-04-14T15:30:00Z",
+        type: "cash_out",
+        amount: 3000,
+        counterparty: "Agent-9922",
+        status: "failed"
+      }
+    ]
+  });
+
+  assert.equal(result.case_type, "payment_failed");
+  assert.equal(result.relevant_transaction_id, "TXN-E7");
+  assert.equal(result.evidence_verdict, "consistent");
+  assert.equal(result.department, "payments_ops");
+});
+
+test("unknown token or transaction reference routes to fraud risk with human review", () => {
+  const result = analyze({
+    ticket_id: "EDGE-008",
+    complaint:
+      "Someone sent me token and transaction reference TXN-UNKNOWN-999 to claim money. This reference is not from my account. Is it safe?",
+    language: "en",
+    transaction_history: [
+      {
+        transaction_id: "TXN-MY-001",
+        timestamp: "2026-04-14T10:00:00Z",
+        type: "transfer",
+        amount: 500,
+        counterparty: "+8801711112222",
+        status: "completed"
+      }
+    ]
+  });
+
+  assert.equal(result.case_type, "other");
+  assert.equal(result.relevant_transaction_id, null);
+  assert.equal(result.evidence_verdict, "inconsistent");
+  assert.equal(result.department, "fraud_risk");
+  assert.equal(result.severity, "medium");
+  assert.equal(result.human_review_required, true);
+  assert.ok(result.reason_codes.includes("ownership_reference_mismatch"));
+});
