@@ -29,7 +29,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       });
     }
 
+    if (isMalformedJsonError(error)) {
+      return res.status(400).json({ error: "invalid_json" });
+    }
+
     console.error("Unexpected /analyze-ticket failure", error);
     return res.status(500).json({ error: "internal_error" });
   }
+}
+
+function isMalformedJsonError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return statusCode === 400 && /invalid json/i.test(error.message);
 }

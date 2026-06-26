@@ -66,6 +66,25 @@ test("empty complaint returns 422 semantically_invalid_request", async () => {
   assert.deepEqual(readError(response.payload), "semantically_invalid_request");
 });
 
+test("lazy malformed JSON parser errors return controlled 400", async () => {
+  const response = createResponse();
+  const parseError = new Error("Invalid JSON") as Error & { statusCode: number };
+  parseError.statusCode = 400;
+
+  await analyzeTicketHandler(
+    {
+      method: "POST",
+      get body(): never {
+        throw parseError;
+      }
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(readError(response.payload), "invalid_json");
+});
+
 test("metadata object is accepted and does not affect required output fields", async () => {
   const response = createResponse();
 
