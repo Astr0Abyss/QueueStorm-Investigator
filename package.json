@@ -10,6 +10,7 @@
     "test": "tsx --test tests/analyzer.test.ts tests/api_contract.test.ts tests/hidden_style.test.ts tests/malformed_input_notes.test.ts tests/public_samples.test.ts tests/schema_and_safety.test.ts",
     "smoke": "tsx tests/smoke.ts",
     "samples": "tsx tests/run_samples.ts",
+    "refresh:sample": "node scripts/refresh-sample-output.mjs",
     "live-smoke": "tsx tests/live_smoke.ts",
     "check": "npm run build && npm test"
   },

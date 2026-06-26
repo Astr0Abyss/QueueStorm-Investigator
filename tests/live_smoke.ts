@@ -1,3 +1,5 @@
+import { hasSafetyViolation } from "../src/safety.js";
+
 const baseUrl = process.env.BASE_URL;
 
 if (!baseUrl) {
@@ -37,7 +39,7 @@ async function main() {
   if (body.case_type !== "phishing_or_social_engineering" || body.department !== "fraud_risk") {
     throw new Error(`Unexpected smoke response: ${JSON.stringify(body)}`);
   }
-  if (typeof body.customer_reply !== "string" || /(?:please\s+)?share.{0,40}(otp|pin|password)/i.test(body.customer_reply)) {
+  if (typeof body.customer_reply !== "string" || hasSafetyViolation(body.customer_reply)) {
     throw new Error(`Unsafe customer reply: ${body.customer_reply}`);
   }
 

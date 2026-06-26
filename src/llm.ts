@@ -19,7 +19,7 @@ type LlmTextPatch = {
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_TIMEOUT_MS = 2500;
-const MAX_TIMEOUT_MS = 5000;
+const MAX_TIMEOUT_MS = 9000;
 
 export async function maybeEnhanceWithLlm(
   ticket: AnalyzeTicketRequest,
