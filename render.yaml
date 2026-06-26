@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: queuestorm-investigator
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ENABLE_LLM_FALLBACK
+        value: "false"
+      - key: AI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
