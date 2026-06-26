@@ -1,0 +1,18 @@
+{
+  "ticket_id": "TKT-005",
+  "relevant_transaction_id": null,
+  "evidence_verdict": "insufficient_data",
+  "case_type": "phishing_or_social_engineering",
+  "severity": "critical",
+  "department": "fraud_risk",
+  "agent_summary": "Customer reports a suspicious credential request or social engineering attempt. No transaction match is required for this safety case.",
+  "recommended_next_action": "Escalate to fraud_risk immediately. Remind the customer that official support never asks for PIN, OTP, password, or card secrets.",
+  "customer_reply": "Thank you for reaching out before sharing any information. We never ask for your PIN, OTP, or password. Please do not share these with anyone, even if they claim to be from official support. Our fraud team will review this incident.",
+  "human_review_required": true,
+  "confidence": 0.95,
+  "reason_codes": [
+    "phishing_or_social_engineering",
+    "insufficient_data",
+    "credential_protection"
+  ]
+}
