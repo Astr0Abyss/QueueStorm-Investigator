@@ -9,6 +9,16 @@ type ChatCompletionResponse = {
   }>;
 };
 
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+};
+
 type LlmTextPatch = {
   agent_summary?: unknown;
   recommended_next_action?: unknown;
@@ -18,6 +28,7 @@ type LlmTextPatch = {
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_TIMEOUT_MS = 2500;
 const MAX_TIMEOUT_MS = 9000;
 
@@ -64,17 +75,24 @@ function readLlmConfig():
       model: string;
       baseUrl: string;
       timeoutMs: number;
+      provider: "gemini" | "openai-compatible";
     }
   | undefined {
+  const geminiKey = process.env.GEMINI_API_KEY;
   const nvidiaKey = process.env.NVIDIA_API_KEY;
-  const apiKey = nvidiaKey || process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
-  const model = nvidiaKey
-    ? process.env.NVIDIA_REPAIR_MODEL || process.env.NVIDIA_PLAN_MODEL || "deepseek-ai/deepseek-v4-pro"
-    : process.env.AI_MODEL || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
+  const apiKey = geminiKey || nvidiaKey || process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
+  const provider = geminiKey ? "gemini" : "openai-compatible";
+  const model = geminiKey
+    ? process.env.GEMINI_MODEL || "gemini-2.5-flash"
+    : nvidiaKey
+      ? process.env.NVIDIA_REPAIR_MODEL || process.env.NVIDIA_PLAN_MODEL || "deepseek-ai/deepseek-v4-pro"
+      : process.env.AI_MODEL || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
   const baseUrl = (
-    nvidiaKey
-      ? process.env.NVIDIA_BASE_URL || DEFAULT_NVIDIA_BASE_URL
-      : process.env.AI_BASE_URL || process.env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL
+    geminiKey
+      ? process.env.GEMINI_BASE_URL || DEFAULT_GEMINI_BASE_URL
+      : nvidiaKey
+        ? process.env.NVIDIA_BASE_URL || DEFAULT_NVIDIA_BASE_URL
+        : process.env.AI_BASE_URL || process.env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL
   ).replace(/\/$/, "");
   const timeoutMs = Math.min(Number(process.env.LLM_TIMEOUT_MS || DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS);
 
@@ -86,19 +104,40 @@ function readLlmConfig():
     apiKey,
     model,
     baseUrl,
-    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS
+    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS,
+    provider
   };
 }
 
 async function requestTextPatch(
   ticket: AnalyzeTicketRequest,
   baseline: AnalyzeTicketResponse,
-  config: { apiKey: string; model: string; baseUrl: string; timeoutMs: number }
+  config: { apiKey: string; model: string; baseUrl: string; timeoutMs: number; provider: "gemini" | "openai-compatible" }
 ): Promise<LlmTextPatch | undefined> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
 
   try {
+    if (config.provider === "gemini") {
+      return requestGeminiTextPatch(ticket, baseline, config, controller);
+    }
+
+    return requestOpenAiCompatibleTextPatch(ticket, baseline, config, controller);
+  } catch (error) {
+    const message = error instanceof Error ? error.name : "unknown_error";
+    console.warn(`LLM text enrichment skipped: ${message}`);
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requestOpenAiCompatibleTextPatch(
+  ticket: AnalyzeTicketRequest,
+  baseline: AnalyzeTicketResponse,
+  config: { apiKey: string; model: string; baseUrl: string },
+  controller: AbortController
+): Promise<LlmTextPatch | undefined> {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
       signal: controller.signal,
@@ -113,31 +152,11 @@ async function requestTextPatch(
         messages: [
           {
             role: "system",
-            content:
-              "You improve support text for a fintech internal copilot. Return only compact JSON. Do not ask for PIN, OTP, password, CVV, full card number, or secret credentials. Do not promise refund, reversal, recovery, or account unblock. Do not change classification, routing, evidence verdict, severity, transaction id, or human review decisions."
+            content: buildSystemPrompt()
           },
           {
             role: "user",
-            content: JSON.stringify({
-              complaint: ticket.complaint,
-              language: ticket.language,
-              baseline: {
-                case_type: baseline.case_type,
-                evidence_verdict: baseline.evidence_verdict,
-                department: baseline.department,
-                severity: baseline.severity,
-                agent_summary: baseline.agent_summary,
-                recommended_next_action: baseline.recommended_next_action,
-                customer_reply: baseline.customer_reply,
-                reason_codes: baseline.reason_codes
-              },
-              requested_json_shape: {
-                agent_summary: "one safe sentence",
-                recommended_next_action: "one operational next step",
-                customer_reply: "safe customer-facing reply",
-                reason_codes: ["optional_short_label"]
-              }
-            })
+            content: buildUserPrompt(ticket, baseline)
           }
         ]
       })
@@ -151,13 +170,79 @@ async function requestTextPatch(
     const data = (await response.json()) as ChatCompletionResponse;
     const content = data.choices?.[0]?.message?.content;
     return content ? parseJsonPatch(content) : undefined;
-  } catch (error) {
-    const message = error instanceof Error ? error.name : "unknown_error";
-    console.warn(`LLM text enrichment skipped: ${message}`);
+}
+
+async function requestGeminiTextPatch(
+  ticket: AnalyzeTicketRequest,
+  baseline: AnalyzeTicketResponse,
+  config: { apiKey: string; model: string; baseUrl: string },
+  controller: AbortController
+): Promise<LlmTextPatch | undefined> {
+  const response = await fetch(
+    `${config.baseUrl}/models/${encodeURIComponent(config.model)}:generateContent?key=${encodeURIComponent(
+      config.apiKey
+    )}`,
+    {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 350,
+          responseMimeType: "application/json"
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: `${buildSystemPrompt()}\n\n${buildUserPrompt(ticket, baseline)}`
+              }
+            ]
+          }
+        ]
+      })
+    }
+  );
+
+  if (!response.ok) {
+    console.warn(`LLM text enrichment skipped: provider returned HTTP ${response.status}`);
     return undefined;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  const data = (await response.json()) as GeminiResponse;
+  const content = data.candidates?.[0]?.content?.parts?.find((part) => typeof part.text === "string")?.text;
+  return content ? parseJsonPatch(content) : undefined;
+}
+
+function buildSystemPrompt(): string {
+  return "You improve support text for a fintech internal copilot. Return only compact JSON. Do not ask for PIN, OTP, password, CVV, full card number, or secret credentials. Do not promise refund, reversal, recovery, or account unblock. Do not change classification, routing, evidence verdict, severity, transaction id, or human review decisions.";
+}
+
+function buildUserPrompt(ticket: AnalyzeTicketRequest, baseline: AnalyzeTicketResponse): string {
+  return JSON.stringify({
+    complaint: ticket.complaint,
+    language: ticket.language,
+    baseline: {
+      case_type: baseline.case_type,
+      evidence_verdict: baseline.evidence_verdict,
+      department: baseline.department,
+      severity: baseline.severity,
+      agent_summary: baseline.agent_summary,
+      recommended_next_action: baseline.recommended_next_action,
+      customer_reply: baseline.customer_reply,
+      reason_codes: baseline.reason_codes
+    },
+    requested_json_shape: {
+      agent_summary: "one safe sentence",
+      recommended_next_action: "one operational next step",
+      customer_reply: "safe customer-facing reply",
+      reason_codes: ["optional_short_label"]
+    }
+  });
 }
 
 function parseJsonPatch(content: string): LlmTextPatch | undefined {
